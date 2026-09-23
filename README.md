@@ -1,2 +1,3 @@
 # devops-course-2026
 Практические работы по курсу «Инструменты DevOps», РТУ МИРЭА
+# Multi-remote test
