@@ -39,7 +39,7 @@
 
 | Имя | Группы | Аутентификация по SSH |
 |---|---|---|
-| student | student, adm, cdrom, sudo, dip, plugdev, users, lxd | запрещена (`AllowUsers devops`) |
+| student | student, adm, cdrom, sudo, dip, plugdev, lxd | запрещена (`AllowUsers devops`) |
 | devops | devops, sudo, users | только по ключу `~/.ssh/devops_vm` (ed25519) |
 
 ```bash
