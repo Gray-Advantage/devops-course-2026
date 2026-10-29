@@ -1,0 +1,134 @@
+# Конфигурация виртуальной машины devops-vm
+
+Хостовая система — MacBook Air (Apple Silicon, macOS 15). VirtualBox 7.2 на Apple Silicon
+не загружает Ubuntu Server (ядро зависает на ранней стадии), поэтому машина развёрнута
+в гипервизоре **UTM 4 (QEMU, ускорение Hypervisor.framework)**. Гостевая ОС — Ubuntu Server
+24.04.5 LTS для arm64.
+
+Восстановление со снимка `01-clean-install` выполняется командами разделов 4–6 по порядку.
+Все команды на сервере — от имени `student` (до раздела 4) или `devops`.
+
+## 1. Параметры машины
+
+| Параметр | Значение |
+|---|---|
+| Наименование | devops-vm |
+| Гипервизор | UTM, бэкенд QEMU, архитектура aarch64, UEFI |
+| ОЗУ | 2048 МБ |
+| Ядра ЦП | 2 |
+| Диск | 25 ГБ, qcow2 (динамически расширяемый), VirtIO |
+| Установка | Ubuntu Server (не minimized), весь диск, OpenSSH server, без snaps |
+| Имя узла | devops-vm (FQDN devops-vm.devops.local) |
+
+## 2. Сетевые интерфейсы
+
+| Интерфейс | Тип адаптера UTM | Адрес | Назначение |
+|---|---|---|---|
+| enp0s1 | Emulated VLAN (аналог NAT VirtualBox) | 10.0.2.15/24 (DHCP) | Доступ в Интернет, проброс SSH |
+| enp0s2 | Host Only | 192.168.56.2/24 (DHCP) | Доступ с хоста напрямую, имя devops.local |
+
+Шлюз хоста в сегменте Host-only — 192.168.56.1.
+
+## 3. Правило проброса портов
+
+Адаптер 1 (Emulated VLAN), протокол TCP: `127.0.0.1:2222` (хост) → порт гостя `2222`.
+До усиления SSH (раздел 5) порт гостя был `22`. В UTM правило меняется только
+у выключенной машины (Edit → Network → Port Forward).
+
+## 4. Учётные записи
+
+| Имя | Группы | Аутентификация по SSH |
+|---|---|---|
+| student | student, adm, cdrom, sudo, dip, plugdev, users, lxd | запрещена (`AllowUsers devops`) |
+| devops | devops, sudo, users | только по ключу `~/.ssh/devops_vm` (ed25519) |
+
+```bash
+# [VM, student]
+sudo adduser devops
+sudo usermod -aG sudo devops
+# [Хост]
+ssh-keygen -t ed25519 -C "devops-vm-key" -f ~/.ssh/devops_vm
+ssh-copy-id -i ~/.ssh/devops_vm.pub -p 2222 devops@127.0.0.1
+```
+
+На хосте в `~/.ssh/config`:
+
+```
+Host devops
+    HostName 127.0.0.1
+    Port 2222
+    User devops
+    IdentityFile ~/.ssh/devops_vm
+    IdentitiesOnly yes
+```
+
+Права на сервере: `~/.ssh` — 700, `~/.ssh/authorized_keys` — 600.
+
+## 5. Служба SSH
+
+Основной файл `/etc/ssh/sshd_config` не изменяется (копия — `sshd_config.backup`).
+Дополняющий файл `/etc/ssh/sshd_config.d/99-hardening.conf`:
+
+```
+Port 2222
+PermitRootLogin no
+PasswordAuthentication no
+PubkeyAuthentication yes
+PermitEmptyPasswords no
+MaxAuthTries 3
+LoginGraceTime 30
+AllowUsers devops
+X11Forwarding no
+ClientAliveInterval 300
+ClientAliveCountMax 2
+```
+
+В `/etc/ssh/sshd_config.d/50-cloud-init.conf` строка `PasswordAuthentication yes`
+закомментирована: файл читается раньше `99-hardening.conf`, и действует первое значение.
+
+```bash
+sudo sed -i 's/^PasswordAuthentication yes/#PasswordAuthentication yes/' /etc/ssh/sshd_config.d/50-cloud-init.conf
+sudo sshd -t && echo "Конфигурация корректна"
+sudo systemctl disable --now ssh.socket     # иначе порт задаёт юнит сокета (22)
+sudo systemctl enable --now ssh.service
+sudo systemctl restart ssh
+sudo ss -tlnp | grep sshd                   # 0.0.0.0:2222
+```
+
+Изменения проверяются новым подключением из второго терминала, не закрывая текущую сессию:
+`ssh -i ~/.ssh/devops_vm -p 2222 devops@192.168.56.2` (через Host-only, пока проброс ещё на 22).
+Затем машина выключается, проброс переводится на порт гостя 2222 (раздел 3).
+
+## 6. Правила межсетевого экрана
+
+Политики: `deny (incoming)`, `allow (outgoing)`, `disabled (routed)`; журнал — `medium`.
+
+```bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw limit 2222/tcp comment 'SSH rate-limited'   # правило создаётся ДО ufw enable
+sudo ufw allow 80/tcp  comment 'HTTP'
+sudo ufw allow 443/tcp comment 'HTTPS'
+sudo ufw enable
+sudo ufw logging medium
+```
+
+| Порт | Действие | Комментарий |
+|---|---|---|
+| 2222/tcp (v4, v6) | LIMIT IN | SSH rate-limited |
+| 80/tcp (v4, v6) | ALLOW IN | HTTP |
+| 443/tcp (v4, v6) | ALLOW IN | HTTPS |
+
+`ufw allow ssh` не используется: имя `ssh` по `/etc/services` означает порт 22.
+
+## 7. Снимки состояния
+
+| Наименование | Момент создания |
+|---|---|
+| 01-clean-install | После установки ОС и `apt upgrade`, машина выключена |
+| 02-keys-configured | После создания devops, ключа и `~/.ssh/config` |
+| 03-ssh-hardened | После усиления SSH и перевода проброса на 2222 |
+
+Имя `devops.local` задаётся на хосте в `/etc/hosts`: `192.168.56.2   devops.local`.
+FQDN сервера: `sudo hostnamectl set-hostname devops-vm` и
+`sudo sed -i 's/^127.0.1.1.*/127.0.1.1 devops-vm.devops.local devops-vm/' /etc/hosts`.
