@@ -129,6 +129,7 @@ sudo ufw logging medium
 | 02-keys-configured | После создания devops, ключа и `~/.ssh/config` |
 | 03-ssh-hardened | После усиления SSH и перевода проброса на 2222 |
 | 04-nginx-https | После установки Nginx и перевода ресурса на HTTPS (ПР № 6) |
+| 05-docker-compose | После запуска проекта «приложение + СУБД» (ПР № 7) |
 
 Имя `devops.local` задаётся на хосте в `/etc/hosts`: `192.168.56.2   devops.local`.
 FQDN сервера: `sudo hostnamectl set-hostname devops-vm` и
@@ -199,3 +200,59 @@ scp devops:/etc/ssl/certs/devops.crt ~/devops.crt
 это openrsync, который не поддерживает `--chmod`.
 
 Снимок состояния `04-nginx-https` создан после перевода ресурса на HTTPS.
+
+## 9. Контейнеризация
+
+| Параметр | Значение |
+|---|---|
+| Docker Engine | 29.9.2 из официального репозитория `download.docker.com` (пакеты `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`, `docker-compose-plugin`); `docker.io` не используется |
+| Группа docker | только `devops` (у него есть sudo — группа docker фактически даёт права root) |
+| Проект на сервере | `/home/devops/app` (доставляется `rsync -avz --delete --exclude=.env app/ devops:app/`) |
+| Файл секретов | `/home/devops/app/.env`, владелец devops, права 600, создаётся только на сервере из `.env.example` |
+| Образы | `devops-app:1.0` (python:3.12-slim, пользователь `app`), `postgres:16-alpine` |
+| Публикация портов | приложение `127.0.0.1:5000:5000`; порт СУБД 5432 не публикуется |
+| Сеть | пользовательская сеть `app_backend` (bridge), СУБД доступна по имени `db` |
+| Том | `app_db_data` → `/var/lib/postgresql/data` |
+| Обратный прокси | `location /app/` в блоке HTTPS `devops-site` → `proxy_pass http://127.0.0.1:5000/` |
+
+Установка (по инструкции docs.docker.com/engine/install/ubuntu):
+
+```bash
+sudo apt-get install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+sudo tee /etc/apt/sources.list.d/docker.sources <<EOT
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: noble
+Components: stable
+Signed-By: /etc/apt/keyrings/docker.asc
+EOT
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker devops      # затем новая SSH-сессия
+```
+
+Запуск проекта:
+
+```bash
+cd ~/app
+cp .env.example .env && chmod 600 .env
+sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 16)/" .env
+docker compose up -d --build
+```
+
+Фрагмент блока HTTPS в `/etc/nginx/sites-available/devops-site`:
+
+```nginx
+    location /app/ {
+        proxy_pass http://127.0.0.1:5000/;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+```
+
+Снимок состояния `05-docker-compose` создан после запуска проекта (ПР № 7).
