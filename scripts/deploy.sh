@@ -42,8 +42,10 @@ if [[ -n "${DRY_RUN}" ]]; then
     exit 0
 fi
 
-# 5. Проверка доступности с проверкой сертификата
-curl -fsS --max-time 5 --cacert "${CA_CERT}" -o /dev/null "${SITE_URL}/" \
+# 5. Проверка доступности с проверкой сертификата.
+# На macOS имена *.local сначала ищутся через mDNS (Bonjour) — разрешение занимает ~5 с,
+# поэтому общий таймаут 15 с.
+curl -fsS --max-time 15 --cacert "${CA_CERT}" -o /dev/null "${SITE_URL}/" \
     || die "ресурс ${SITE_URL} недоступен после доставки"
 
 echo "deployed ${COMMIT}"
