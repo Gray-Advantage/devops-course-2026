@@ -20,7 +20,7 @@ case "${1:-}" in
 esac
 
 # rsync из macOS (openrsync) не поддерживает --chmod — нужен GNU rsync 3.x
-rsync --version 2>/dev/null | head -1 | grep -q 'version 3' \
+[[ "$(rsync --version 2>/dev/null)" == *"rsync  version 3"* ]] \
     || die "требуется GNU rsync 3.x (на macOS: brew install rsync)"
 
 # 2. Проверки по требованиям 4 и 5
