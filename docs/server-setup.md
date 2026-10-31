@@ -128,7 +128,74 @@ sudo ufw logging medium
 | 01-clean-install | После установки ОС и `apt upgrade`, машина выключена |
 | 02-keys-configured | После создания devops, ключа и `~/.ssh/config` |
 | 03-ssh-hardened | После усиления SSH и перевода проброса на 2222 |
+| 04-nginx-https | После установки Nginx и перевода ресурса на HTTPS (ПР № 6) |
 
 Имя `devops.local` задаётся на хосте в `/etc/hosts`: `192.168.56.2   devops.local`.
 FQDN сервера: `sudo hostnamectl set-hostname devops-vm` и
 `sudo sed -i 's/^127.0.1.1.*/127.0.1.1 devops-vm.devops.local devops-vm/' /etc/hosts`.
+
+## 8. Веб-сервер
+
+| Параметр | Значение |
+|---|---|
+| Пакет | `nginx` 1.24.0 из репозитория Ubuntu (`sudo apt install -y nginx`) |
+| Конфигурация ресурса | `/etc/nginx/sites-available/devops-site`, ссылка в `sites-enabled/`; `sites-enabled/default` удалена (сам файл в `sites-available/` сохранён) |
+| Каталог ресурса | `/var/www/devops-site`, владелец `devops:devops`, каталоги 755, файлы 644 |
+| Сертификат | `/etc/ssl/certs/devops.crt`, `root:root`, 644, CN и SAN `DNS:devops.local` |
+| Закрытый ключ | `/etc/ssl/private/devops.key`, `root:root`, 600 |
+| Срок действия | 365 дней |
+| Журналы | `/var/log/nginx/devops-site.access.log`, `/var/log/nginx/devops-site.error.log` |
+| Доставка | `scripts/deploy.sh` (rsync `--delete --chmod=D755,F644`, проверка `curl --cacert`) |
+
+```bash
+sudo mkdir -p /var/www/devops-site && sudo chown -R devops:devops /var/www/devops-site
+sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /etc/ssl/private/devops.key -out /etc/ssl/certs/devops.crt \
+  -subj "/CN=devops.local" -addext "subjectAltName=DNS:devops.local"
+```
+
+`/etc/nginx/sites-available/devops-site`:
+
+```nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name devops.local;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name devops.local;
+
+    ssl_certificate     /etc/ssl/certs/devops.crt;
+    ssl_certificate_key /etc/ssl/private/devops.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    root /var/www/devops-site;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    error_page 404 /404.html;
+
+    access_log /var/log/nginx/devops-site.access.log;
+    error_log  /var/log/nginx/devops-site.error.log;
+}
+```
+
+```bash
+sudo ln -s /etc/nginx/sites-available/devops-site /etc/nginx/sites-enabled/
+sudo rm /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
+# [Хост] сертификат для проверки без -k
+scp devops:/etc/ssl/certs/devops.crt ~/devops.crt
+```
+
+На хосте macOS для доставки нужен GNU rsync (`brew install rsync`): системный `/usr/bin/rsync` —
+это openrsync, который не поддерживает `--chmod`.
+
+Снимок состояния `04-nginx-https` создан после перевода ресурса на HTTPS.

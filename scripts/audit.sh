@@ -28,5 +28,15 @@ check "Входящий трафик по умолчанию запрещён" "
 echo "[3] Учётные записи"
 awk -F: '$3>=1000 && $3<65534 {printf "    %s (uid=%s)\n",$1,$3}' /etc/passwd
 
+echo "[4] Веб-сервер"
+CERT_MIN_DAYS="${CERT_MIN_DAYS:-30}"    # порог можно завысить для проверки: CERT_MIN_DAYS=400
+check "Служба nginx активна" "active" "$(systemctl is-active nginx)"
+check "Конфигурация nginx корректна" "0" "$(sudo nginx -t >/dev/null 2>&1; echo $?)"
+check "Сертификат devops.crt действует ещё не менее ${CERT_MIN_DAYS} дн." "0" \
+      "$(openssl x509 -checkend $((CERT_MIN_DAYS * 86400)) -noout -in /etc/ssl/certs/devops.crt >/dev/null; echo $?)"
+check "Нет файлов ресурса, доступных для записи всем" "" \
+      "$(find /var/www/devops-site -perm -o+w)"
+check "Права закрытого ключа devops.key равны 600" "600" "$(sudo stat -c '%a' /etc/ssl/private/devops.key)"
+
 echo "Пройдено: $PASS, не пройдено: $FAIL"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
