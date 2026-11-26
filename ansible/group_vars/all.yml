@@ -1,0 +1,6 @@
+---
+app_image: "ghcr.io/gray-advantage/devops-ci-app"
+app_tag: "d6460b218f61bcaf96cbedc7bb93ee632825c8b1"
+app_container_name: "devops-ci-app"
+app_host_port: 5000
+app_internal_port: 5000
