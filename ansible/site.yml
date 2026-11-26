@@ -1,0 +1,10 @@
+---
+- name: Configure and deploy the DevOps VM
+  hosts: vm
+  become: true
+  environment: "{{ vm_network_environment | default({}) }}"
+  roles:
+    - base
+    - ssh
+    - nginx
+    - app

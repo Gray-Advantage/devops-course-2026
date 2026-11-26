@@ -256,3 +256,40 @@ docker compose up -d --build
 ```
 
 Снимок состояния `05-docker-compose` создан после запуска проекта (ПР № 7).
+
+## 10. Управление конфигурацией через Ansible
+
+Для ПР № 11 и КР № 3 используется отдельная UTM-машина `devops-ci-vm`: копия
+состояния `01-clean-install`, Ubuntu 24.04 ARM64. Исходная ВМ предыдущих работ
+выключена. Обе ВМ используют адрес 192.168.56.2 в Host-only, поэтому в этом
+режиме запускается только одна из них.
+
+Управляющий узел для ПР № 11 — Mac с ansible-core 2.19.15. Инвентарь
+`inventory/bootstrap.ini` использует `student` и открытый ключ из ПР № 5,
+предварительно установленный на учебной ВМ. Для первого запуска sudo нужен
+пароль студента. `inventory/prod.ini` использует `devops`, тот же открытый
+ключ и настроенный плейбуком неинтерактивный sudo.
+
+| Роль | Состояние |
+| --- | --- |
+| base | Системные пакеты и официальный Docker Engine для архитектуры гостя |
+| ssh | Пользователь, открытый ключ, настройки sshd, правила UFW |
+| nginx | Сайт с reverse proxy, проверка конфигурации перед reload |
+| app | Pull из GHCR по полному SHA, контейнер и проверка HTTP |
+
+Образ `ghcr.io/gray-advantage/devops-ci-app` загружается с тегом
+`app_tag` из `ansible/group_vars/all.yml`. Хостовый порт контейнера
+`127.0.0.1:5000` доступен локально. С хоста HTTP проверяется через Nginx на
+`http://192.168.56.2/health`.
+
+```bash
+cd ansible
+ansible-galaxy collection install -r requirements.yml
+ansible-playbook -i inventory/bootstrap.ini site.yml --ask-become-pass
+ansible-playbook site.yml
+ansible-playbook verify.yml
+curl --fail --silent --show-error http://192.168.56.2/health
+```
+
+Управляющий узел КР № 3 запускает Ansible с ключом, выделенным этому стенду.
+Job деплоя передаёт тег коммита через `-e app_tag=...`.
